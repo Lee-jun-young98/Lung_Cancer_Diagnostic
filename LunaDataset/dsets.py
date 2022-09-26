@@ -88,15 +88,15 @@ def getCandidateInfoList(requireOnDisk_bool=True): # disk에 없는 데이터를
     candidateInfo_list.sort(reverse=True) # 내림차순 정렬
     return candidateInfo_list
 
-@functools.lru_cache(1, typed=True)
-def getCt(series_uid):
-    return Ct(series_uid)
+# @functools.lru_cache(1, typed=True)
+# def getCt(series_uid):
+#     return Ct(series_uid)
 
-@raw_cache.memoize(typed=True)
-def getCtRawCandidate(series_uid, center_xyz, width_irc):
-    ct = getCt(series_uid)
-    ct_chunk, center_irc = ct.getRawCandidate(center_xyz, width_irc)
-    return ct_chunk, center_irc
+# @raw_cache.memoize(typed=True)
+# def getCtRawCandidate(series_uid, center_xyz, width_irc):
+#     ct = getCt(series_uid)
+#     ct_chunk, center_irc = ct.getRawCandidate(center_xyz, width_irc)
+#     return ct_chunk, center_irc
 
 """
 개별 CT 스캔 로딩
@@ -149,6 +149,7 @@ class Ct:
             start_ndx = int(round(center_val - width_irc[axis]/2))
             end_ndx = int(start_ndx + width_irc[axis])
 
+            # assert 조건식이 False인 경우, AssertionError 예외가 발생한다.
             assert center_val >= 0 and center_val < self.hu_a.shape[axis], repr([self.series_uid, center_xyz, self.origin_xyz, self.vxSize_xyz, center_irc, axis])
 
             if start_ndx < 0:
@@ -248,7 +249,12 @@ class LunaDataset(Dataset):
             dtype=torch.long,
         )
 
-        return candidate_t, pos_t, candidateInfo_tup.series_uid, torch.tensor(center_irc)
+        return (
+            candidate_t, 
+            pos_t, 
+            candidateInfo_tup.series_uid, 
+            torch.tensor(center_irc),
+        )
 
 
 # # 처음 tensor는 candidate_t

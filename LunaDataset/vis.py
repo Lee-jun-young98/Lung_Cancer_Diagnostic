@@ -11,7 +11,7 @@ from LunaDataset.dsets import Ct, LunaDataset
 clim=(-1000.0, 300)
 
 def findPositiveSamples(start_ndx=0, limit=100):
-    ds = LunaDataset(sortby_str='label_and_size')
+    ds = LunaDataset()
 
     positiveSample_list = []
     for sample_tup in ds.candidateInfo_list:
@@ -95,7 +95,7 @@ def showCandidate(series_uid, batch_ndx=None, **kwargs):
                 label.set_fontsize(20)
             plt.imshow(ct_a[index], clim=clim, cmap='gray')
 
-
     print(series_uid, batch_ndx, bool(pos_t[0]), pos_list)
+
 
 
