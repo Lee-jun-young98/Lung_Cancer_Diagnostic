@@ -28,6 +28,7 @@ log.setLevel(logging.INFO)
 log.setLevel(logging.DEBUG)
 
 # Used for computeBatchLoss and logMetrics to index into metrics_t/metrics_a
+# ComputeBatchLoss와 logMetrics는 metrics_t/metrics_a로 인덱싱하는데 사용됨
 METRICS_LABEL_NDX=0
 METRICS_PRED_NDX=1
 METRICS_LOSS_NDX=2
@@ -165,22 +166,24 @@ class LunaTrainingApp:
             self.trn_writer.close()
             self.val_writer.close()
 
+    # trnMetrics_g : 텐서가 훈련 중에 자세한 클래스 단위 메트릭을 수집함, 규모가 큰 프로젝트에서는 이 값으로 통찰을 얻는 경우가
+    # 많기 때문에 필요
     def doTraining(self, epoch_ndx, train_dl):
         self.model.train()
-        trnMetrics_g = torch.zeros(
+        trnMetrics_g = torch.zeros( # 빈 메트릭 배열을 초기화 
             METRICS_SIZE,
             len(train_dl.dataset),
             device=self.device,
         )
-
-        batch_iter = enumerateWithEstimate(
+        # train_dl을 직접 순회하지 않으며, 완료 시간 예측을 제공하기 위해 enumerateWithEstimate를 사용 
+        batch_iter = enumerateWithEstimate( # 시간을 예측하며 배치 루프를 설정함.
             train_dl,
             "E{} Training".format(epoch_ndx),
             start_ndx=train_dl.num_workers,
         )
         for batch_ndx, batch_tup in batch_iter:
-            self.optimizer.zero_grad()
-
+            self.optimizer.zero_grad() # 남은 가중치 텐서를 해제함
+            # 실제 손실 계산이 이루어지는 곳
             loss_var = self.computeBatchLoss(
                 batch_ndx,
                 batch_tup,
@@ -204,7 +207,7 @@ class LunaTrainingApp:
 
     def doValidation(self, epoch_ndx, val_dl):
         with torch.no_grad():
-            self.model.eval()
+            self.model.eval() # 훈련 때 사용했던 기능 끄기 -> 기울기 계산이 필요 없기 때문에 성능이 향상 된다.
             valMetrics_g = torch.zeros(
                 METRICS_SIZE,
                 len(val_dl.dataset),
@@ -222,22 +225,30 @@ class LunaTrainingApp:
         return valMetrics_g.to('cpu')
     
 
+    
     def computeBatchLoss(self, batch_ndx, batch_tup, batch_size, metrics_g):
+        """
+        훈련 루프와 검증 루프 양쪽에서 모두 호출됨
+        샘플 배치에 대해 손실을 계산함
+        각 클래스별로 계산이 얼마나 정확한지 백분율로 계산할 수 있음
+        분류가 잘 되지 않는 클래스를 찾아 집중 개선할 수 있음
+        """
         input_t, label_t, _series_list, _center_list = batch_tup
 
-        input_g = input_t.to(self.device, non_blocking=True)
-        label_g = label_t.to(self.device, non_blocking=True)
+        input_g = input_t.to(self.device, non_blocking=True) # 배치 튜플의 패킹을 풀고 텐서를 GPU로 옮김
+        label_g = label_t.to(self.device, non_blocking=True) # 배치 튜플의 패킹을 풀고 텐서를 GPU로 옮김
 
         logits_g, probabillity_g = self.model(input_g)
 
-        loss_func = nn.CrossEntropyLoss(reduction='none')
+        loss_func = nn.CrossEntropyLoss(reduction='none') # 샘플별 손실값을 얻음
         loss_g = loss_func(
             logits_g,
-            label_g[:,1],
+            label_g[:,1], # 원 핫 인코딩 클래스의 인덱스
         )
         start_ndx = batch_ndx * batch_size
         end_ndx = start_ndx + label_t.size(0)
 
+        # 기울기에 의존적인 메트릭이 없으므로 detach를 사용
         metrics_g[METRICS_LABEL_NDX, start_ndx:end_ndx] = \
             label_g[:,1].detach()
         metrics_g[METRICS_PRED_NDX, start_ndx:end_ndx] = \
@@ -245,13 +256,13 @@ class LunaTrainingApp:
         metrics_g[METRICS_LOSS_NDX, start_ndx:end_ndx] = \
             loss_g.detach()
 
-        return loss_g.mean()
+        return loss_g.mean() # 샘플별 손실값을 단일값으로 합침 -> 전체 배치에 대한 손실값
 
     def logMetrics(
             self,
-            epoch_ndx,
-            mode_str,
-            metrics_t,
+            epoch_ndx, # epoch 표시
+            mode_str, # train, val 확인
+            metrics_t, # trnMetrics_t, valMetrics_t -> computeBatchLoss를 통해 만들어진 부동 소수점 텐서
             classificationThreshold=0.5,
     ):
         self.initTensorboardWriters()
@@ -260,8 +271,8 @@ class LunaTrainingApp:
             type(self).__name__,
         ))
 
-        negLabel_mask = metrics_t[METRICS_LABEL_NDX] <= classificationThreshold
-        negPred_mask = metrics_t[METRICS_PRED_NDX] <= classificationThreshold
+        negLabel_mask = metrics_t[METRICS_LABEL_NDX] <= classificationThreshold # 결절 샘플에 대해서 메트릭을 제한함
+        negPred_mask = metrics_t[METRICS_PRED_NDX] <= classificationThreshold # 예측 값에 대해서 메트릭을 제한함
 
         posLabel_mask = ~negLabel_mask
         posPred_mask = ~negPred_mask
