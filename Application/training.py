@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import torch
 import torch.nn as nn
+print(torch.cuda.is_available())
 from torch.optim import SGD, Adam
 from torch.utils.data import DataLoader
 
@@ -42,7 +43,7 @@ class LunaTrainingApp:
         parser = argparse.ArgumentParser()
         parser.add_argument('--num-workers',
             help = 'Number of worker processes for background data loading',
-            default=8,
+            default=1, # 8
             type=int,
         )
         parser.add_argument('--batch-size',
