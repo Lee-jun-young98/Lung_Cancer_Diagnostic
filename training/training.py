@@ -1,3 +1,16 @@
+# 연습문제
+# 1. DataLoader 인스턴스 내에 래핑한 LunaDataset 인스턴스를 순회하는 프로그램을 만들어라
+# 순회할 때 걸리는 시간도 알 수 있게 만들기
+#   a. num_worker = 0,1,2로 할 때 어떤 차이가 발생하는가
+#       - 0일 때 CPU의 사용값이 높아지며 각 배치당 1분내지의 시간이 걸린다.
+#   b. 메모리가 모자라지 않는 선에서 최대로 끌어올릴 수 있는 batch_size = ...와 num_workers=...는 얼마인가
+# 2. noduleInfo_list의 정렬 순서를 반대로 해보자. 이렇게 바꾸면 훈련의 첫 에포크 후에 동작 방식에서 어떤 차이가 발생하는가?
+# 3. logMetrics를 바꿔서 텐서보드가 사용하는 실행 아이템 이름과 키를 변경해보자
+#   a. writer.add_scalar로 전달되는 키 값에 처음으로 나타나는 슬래시 문자 위치를 바꿔보자.
+#   b. 동일한 쓰기 객체를 사용해서 훈련과 검증에 대해 돌려본 후 키 이름에 trn이나 val문자열을 덧붙여보자.
+#   c. 로그 디렉토리와 키 값을 원하는 대로 바꿔보자.
+
+
 import argparse
 import datetime
 import enum
@@ -43,7 +56,7 @@ class LunaTrainingApp:
         parser = argparse.ArgumentParser()
         parser.add_argument('--num-workers',
             help = 'Number of worker processes for background data loading',
-            default=8, # 8
+            default=1, # 8
             type=int,
         )
         parser.add_argument('--batch-size',
@@ -56,6 +69,11 @@ class LunaTrainingApp:
             default=1,
             type=int,
         )
+        parser.add_argument('--balanced', # 데이터 균형 파라미터 추가
+            help="Balance the training data to half positive, half negative.",
+            action = 'store_true',
+            default=False,
+        )
 
         parser.add_argument('--tb-prefix',
             default='p2ch11',
@@ -67,7 +85,7 @@ class LunaTrainingApp:
             nargs = '?',
             default='dwlpt',
         )
-        self.cli_args = parser.parse_args(sys_argv)
+        self.   cli_args = parser.parse_args(sys_argv)
         self.time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
 
         self.trn_writer = None
@@ -97,7 +115,9 @@ class LunaTrainingApp:
         train_ds = LunaDataset(
             val_stride=10,
             isValSet_bool=False,
+            ratio_int=int(self.cli_args.balanced),
         )
+        
         batch_size = self.cli_args.batch_size
         if self.use_cuda:
             batch_size *= torch.cuda.device_count() # gpu개수에 배치사이즈를 곱함
@@ -210,6 +230,7 @@ class LunaTrainingApp:
             valMetrics_g = torch.zeros(
                 METRICS_SIZE,
                 len(val_dl.dataset),
+                device=self.device,
             )
 
             batch_iter = enumerateWithEstimate(
@@ -276,28 +297,41 @@ class LunaTrainingApp:
         posLabel_mask = ~negLabel_mask
         posPred_mask = ~negPred_mask
 
-        neg_count = int(negLabel_mask.sum())
-        pos_count = int(posLabel_mask.sum())
+        neg_count = int(negLabel_mask.sum()) # 음성 개수
+        pos_count = int(posLabel_mask.sum()) # 양성 개수
 
-        neg_correct = int((negLabel_mask & negPred_mask).sum())
-        pos_correct = int((posLabel_mask & posPred_mask).sum())
+        # 각 에포크마다 정밀도와 재현율을 출력하도록 추가
+
+        trueNeg_count = neg_correct = int((negLabel_mask & negPred_mask).sum()) # trueNeg_count
+        truePos_count = pos_correct = int((posLabel_mask & posPred_mask).sum()) # truePos_count
+
+        falsePos_count = neg_count - neg_correct # 거짓 양성 비율 # 실제로 음성
+        falseNeg_count = pos_count - pos_correct # 거짓 음성 비율 # 실제로 양성
 
         metrics_dict = {}
-        metrics_dict['loss/all'] = \
-            metrics_t[METRICS_LOSS_NDX].mean()
-        metrics_dict['loss/neg'] = \
-            metrics_t[METRICS_LOSS_NDX, negLabel_mask].mean()
-        metrics_dict['loss/pos'] = \
-            metrics_t[METRICS_LOSS_NDX, posLabel_mask].mean()
+        metrics_dict['loss/all'] = metrics_t[METRICS_LOSS_NDX].mean()
+        metrics_dict['loss/neg'] = metrics_t[METRICS_LOSS_NDX, negLabel_mask].mean()
+        metrics_dict['loss/pos'] = metrics_t[METRICS_LOSS_NDX, posLabel_mask].mean()
+            
+        metrics_dict['correct/all'] = (pos_correct + neg_correct) / metrics_t.shape[1] * 100
+        metrics_dict['correct/neg'] = (neg_correct) / neg_count * 100
+        metrics_dict['correct/pos'] = (pos_correct) / pos_count * 100
+
+        precision = metrics_dict['pr/precision'] = \
+            truePos_count / np.float32(truePos_count + falsePos_count)
+        recall = metrics_dict['pr/recall'] = \
+            truePos_count / np.float32(truePos_count + falseNeg_count)
+
+        metrics_dict['pr/f1_score'] = \
+            2 * (precision * recall) / (precision + recall)
         
-        metrics_dict['correct/all'] = (pos_correct + neg_correct) \
-            / np.float32(metrics_t.shape[1]) * 100
-        metrics_dict['correct/neg'] = neg_correct / np.float32(neg_count) * 100
-        metrics_dict['correct/pos'] = pos_correct / np.float32(pos_count) * 100
 
         log.info(
             ("E{} {:8} {loss/all:.4f} loss, "
                 + "{correct/all:-5.1f}% correct, "
+                + "{pr/precision:.4f} precision, "
+                + "{pr/recall:.4f} recall, "
+                + "{pr/f1_score:.4f} f1 score"
             ).format(
                 epoch_ndx,
                 mode_str,
