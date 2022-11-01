@@ -12,6 +12,7 @@ import numpy as np
 
 import torch
 import torch.cuda
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 import sys
@@ -192,8 +193,10 @@ class LunaDataset(Dataset):
                  val_stride=0,
                  isValSet_bool=None,
                  series_uid=None,
-                 sortby_str = 'random'
+                 sortby_str = 'random',
+                 ratio_int=0 # ratio_int에 따라서 음성 샘플과 양성 샘플의 비율이 변함
             ):
+        self.ratio_int = ratio_int
         self.candidateInfo_list = copy.copy(getCandidateInfoList())
 
         if series_uid:
@@ -205,6 +208,7 @@ class LunaDataset(Dataset):
             assert val_stride > 0, val_stride
             self.candidateInfo_list = self.candidateInfo_list[::val_stride]
             assert self.candidateInfo_list
+        
         elif val_stride > 0:
             del self.candidateInfo_list[::val_stride]
             assert self.candidateInfo_list
@@ -218,18 +222,49 @@ class LunaDataset(Dataset):
         else:
             raise Exception("Unknown sort: " + repr(sortby_str))
 
+        self.negative_list = [
+            nt for nt in self.candidateInfo_list if not nt.isNodule_bool
+        ]
+        self.pos_list = [
+            nt for nt in self.candidateInfo_list if nt.isNodule_bool
+        ]
         
         log.info("{!r}: {} {} samples".format(
             self,
             len(self.candidateInfo_list),
             "validation" if isValSet_bool else "training",
+            len(self.negative_list),
+            len(self.pos_list),
+            '{}:1'.format(self.ratio_int) if self.ratio_int else 'unbalanced'
         ))
 
-    def __len__(self):
-        return len(self.candidateInfo_list)
+    def shuffleSamples(self): # 매 에포크의 시작지점에서 이 메소드를 호출하여 샘플 순서를 랜덤하게 만듦
+        if self.ratio_int:
+            random.shuffle(self.negative_list)
+            random.shuffle(self.pos_list)
+
+
+    def __len__(self): # 데이터셋 길이 변경
+        if self.ratio_int:
+            return 200000
+        else:
+            return len(self.candidateInfo_list)
 
     def __getitem__(self, ndx):
-        candidateInfo_tup = self.candidateInfo_list[ndx]
+        if self.ratio_int: # ratio_int가 0이면 값이 고르게 분포된 것
+            pos_ndx = ndx // (self.ratio_int + 1)
+
+            if ndx % (self.ratio_int + 1): # 나머지가 0이 아니면 음성 샘플
+                neg_ndx = ndx - 1 - pos_ndx # 데이터셋 인덱스에서 1을 뺀 후 
+                neg_ndx %= len(self.negative_list) # 오버 플로되면 앞으로 돌아옴 실행
+                candidateInfo_tup = self.negative_list[neg_ndx]
+            else:
+                pos_ndx %= len(self.pos_list)
+                candidateInfo_tup = self.pos_list[pos_ndx] # 오버 플로되면 앞으로 돌아옴 끝
+        else:
+            candidateInfo_tup = self.candidateInfo_list[ndx] # 클래스 밸런싱이 아니면 N번째 샘플을 반환
+
+
         width_irc = (32, 48, 48)
 
         candidate_a, center_irc = getCtRawCandidate(
