@@ -153,10 +153,30 @@ class LunaTrainingApp:
         if self.trn_writer is None:
             log_dir = os.path.join('runs', self.cli_args.tb_prefix, self.time_str)
 
-            self.trn_writer = SummaryWriter(
-                log_dir=log_dir + '-trn_cls-' + self.cli_args.comment)
-            self.val_writer = SummaryWriter(
-                log_dir=log_dir + '-val_cls-' + self.cli_args.comment)
+            if self.cli_args.balanced: # balance 값을 true로 했을 때
+                self.trn_writer = SummaryWriter(
+                    log_dir=log_dir + '-trn_cls-'
+                     + self.cli_args.comment 
+                     + ("_" + self.cli_args.epochs)
+                     + "_balanced")
+                self.val_writer = SummaryWriter(
+                    log_dir=log_dir + '-val_cls-'
+                     + self.cli_args.comment
+                     + ("_" + self.cli_args.epochs)
+                     + "_balanced")
+            else:
+                self.trn_writer = SummaryWriter(
+                    log_dir=log_dir + '-trn_cls-' 
+                    + self.cli_args.comment
+                    + ("_" + self.cli_args.epochs)
+                    ) # epochs
+                self.val_writer = SummaryWriter(
+                    log_dir=log_dir + '-val_cls-' 
+                    + self.cli_args.comment
+                    + ("_" + self.cli_args.epochs)
+                    ) # epochs
+
+            
             
     def main(self):
         log.info("Starting {}, {}".format(type(self).__name__, self.cli_args))
@@ -240,7 +260,11 @@ class LunaTrainingApp:
             )
             for batch_ndx, batch_tup in batch_iter:
                 self.computeBatchLoss(
-                    batch_ndx, batch_tup, val_dl.batch_size, valMetrics_g)
+                    batch_ndx,
+                    batch_tup,
+                    val_dl.batch_size,
+                    valMetrics_g,
+                )
         
         return valMetrics_g.to('cpu')
     
