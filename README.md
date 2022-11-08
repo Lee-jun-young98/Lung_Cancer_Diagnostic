@@ -26,4 +26,6 @@
 [텐서보드로 훈련 관려 메트릭 그려보기](https://fuchsia-runner-4af.notion.site/5ec305a79d9e485a94a020f71f0eee50)
 
 [데이터셋의 클래스 밸런싱 구현하기](https://fuchsia-runner-4af.notion.site/56d0629a941e4784bcf129a8a842c067)
+
+[데이터 증강으로 과적합 방지하기](https://www.notion.so/5d9a4e145dca41d3b9b2eb2b63abd3ed)
 ## Deep Learning
