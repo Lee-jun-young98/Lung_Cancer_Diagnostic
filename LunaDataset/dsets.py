@@ -2,6 +2,7 @@ import copy
 import csv
 import functools
 import glob
+import math
 import os
 import random
 
@@ -180,6 +181,88 @@ def getCtRawCandidate(series_uid, center_xyz, width_irc):
     ct = getCt(series_uid)
     ct_chunk, center_irc = ct.getRawCandidate(center_xyz, width_irc)
     return ct_chunk, center_irc
+
+"""
+데이터 파이프라인 구조를 잘 만들어 증강 전에 캐시 단계가 놓이게 만들어야 함
+-> 안 그러면 증강된 데이터 상태로 고정되어 원래 목적을 잃어버림
+"""
+def getCtAugmentedCandidate(
+        augmentation_dict,
+        series_uid, center_xyz, width_irc,
+        use_cache=True):
+        if use_cache: # cache를 사용
+            ct_chunk, center_irc = \
+                getCtRawCandidate(series_uid, center_xyz, width_irc)
+        else: # cache 사용하지 않을 경우 직접 불러옴
+            ct = getCt(series_uid)
+            ct_chunk, center_irc = ct.getRawCandidate(center_xyz, width_irc)
+
+        ct_t= torch.tensor(ct_chunk).unsqueeze(0).unsqueeze(0).to(torch.float32)
+
+        transform_t = torch.eye(4) # 4 * 4의 단위 행렬을 만듦
+        # ...<1> transform_tensor를 수정
+        """
+        random.random() -> 0에서 1사이의 실수를 리턴함
+        grid_sample 함수는 [-1, 1] 범위를 이전 텐서와 새 텐서 모두에 매핑함
+        flip : 범위 매핑으로 데이터를 미러링하기 위해 변환 행렬의 관련 요소에 -1을 곱함
+        offset : 오프셋이 복셀 단위의 정수가 아닌 경우에 더 두드러진 차이를 만듦. 삼중 선형 보간법을 사용하여 약간의 흐림(blur) 처리가 들억는 형태로 데이터가 다시 샘플링됨
+                샘플의 경계에 있는 복셀은 반복되므로 경계를 따라 얼룩진 줄무늬처럼 보임 [-1, 1] 범위와 같은 비율로 표시되는 최대 오프셋
+        scale : 이미지의 크기를 확대 축소 하는 것, 경계 복셀이 반복되는 효과를 가짐 [-1, 1] 범위로 변환됨
+        rotate : X축과 Y축만 회전함 
+        noise : 샘플에 노이즈를 너무 많이 넣으면 실 데이터를 분류 못할 수 도 있음 
+        """
+
+        for i in range(3):
+            if 'flip' in augmentation_dict:
+                if random.random() > 0.5:
+                    transform_t[i, i] *= -1
+
+            if 'offset' in augmentation_dict:
+                offset_float = augmentation_dict['offset']
+                random_float = (random.random() * 2 - 1)
+                transform_t[i, 3] = offset_float * random_float
+
+            if 'scale' in augmentation_dict:
+                scale_float = augmentation_dict['scale']
+                random_float = (random.random() * 2 - 1)
+
+        if 'rotate' in augmentation_dict:
+            angle_red = random.random() * math.pi * 2
+            s = math.sin(angle_red)
+            c = math.cos(angle_red)
+
+            rotation_t = torch.tensor([
+                [c, -s, 0, 0],
+                [s, c, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ])
+
+            transform_t @= rotation_t
+
+        affine_t = F.affine_grid(
+                transform_t[:3].unsqueeze(0).to(torch.float32),
+                ct_t.size(),
+                align_corners=False,
+            ) # output Tensor of size(N X H X W X 2)
+
+        
+        augmented_chunk = F.grid_sample( 
+                ct_t,
+                affine_t,
+                padding_mode = 'border',
+                align_corners=False,
+        ).to('cpu')
+
+        if 'noise' in augmentation_dict:
+            noise_t = torch.randn_like(augmented_chunk)
+            noise_t *= augmentation_dict['noise']
+
+            augmented_chunk += noise_t
+        
+        return augmented_chunk[0], center_irc
+
+
 
 """
 간단한 데이터셋 구현
